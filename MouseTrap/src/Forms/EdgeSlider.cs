@@ -4,6 +4,8 @@ using System.Drawing.Drawing2D;
 namespace MouseTrap.Forms;
 
 public class EdgeSlider /*: UserControl*/ {
+    public Guid BarId { get; }
+
     public bool Visible { get; set; }
     public Rectangle Bounds { get; set; }
     public Size Size => Bounds.Size;
@@ -11,6 +13,8 @@ public class EdgeSlider /*: UserControl*/ {
     public int Height => Bounds.Size.Height;
     public Color BackColor { get; set; }
     public Control Form { get; }
+
+    public event EventHandler? RemoveRequested;
 
     public LayoutStyle LayoutStyle { get; set; }
     internal Bar Bar { get; private set; } = null!;
@@ -32,21 +36,37 @@ public class EdgeSlider /*: UserControl*/ {
     }
     public int TargetScreenId { get; set; }
 
-    public EdgeSlider(SliderPanel form)
+    private readonly SliderPanel _panel;
+
+    private readonly LayoutEventHandler _layoutHandler;
+    private readonly EventHandler _hoverHandler;
+    private readonly MouseEventHandler _hoverMoveHandler;
+    private readonly MouseEventHandler _mouseDownHandler;
+    private readonly MouseEventHandler _mouseUpHandler;
+    private readonly MouseEventHandler _dragHandler;
+
+    public EdgeSlider(SliderPanel form, Guid? barId = null)
     {
+        BarId = barId ?? Guid.NewGuid();
+
         form.Sliders.Add(this);
+        this._panel = form;
         this.Form = form;
         this.BackColor = System.Drawing.SystemColors.Control;
         //this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
         //this.BackColor = Color.Transparent;
 
-        this.Form.Layout += (s, e) => { Bar = GetBar(Size, TopOffset, BottomOffset); };
-        this.Form.MouseEnter += (s, e) => { HandleHover(); };
-        this.Form.MouseHover += (s, e) => { HandleHover(); };
-        this.Form.MouseMove += (s, e) => { HandleHover(); };
-        this.Form.MouseLeave += (s, e) => { HandleHover(); };
+        _layoutHandler = (s, e) => { Bar = GetBar(Size, TopOffset, BottomOffset); };
+        _hoverHandler = (s, e) => { HandleHover(); };
+        _hoverMoveHandler = (s, e) => { HandleHover(); };
 
-        this.Form.MouseDown += (s, e) => {
+        _mouseDownHandler = (s, e) => {
+            var clickPos = this.PointToClient(Cursor.Position);
+            if (Visible && Bar.CloseButton != Rectangle.Empty && Bar.CloseButton.Contains(clickPos)) {
+                RemoveRequested?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
             Bar.Top.Active = Bar.Top.Hover;
             Bar.Bottom.Active = Bar.Bottom.Hover;
 
@@ -64,11 +84,11 @@ public class EdgeSlider /*: UserControl*/ {
                 Bar.Bottom.CursorPos = Bar.Bottom.GetBounds().Size - new Size(offset.X, offset.Y);
             }
         };
-        this.Form.MouseUp += (s, e) => {
+        _mouseUpHandler = (s, e) => {
             Bar.Top.Active = false;
             Bar.Bottom.Active = false;
         };
-        this.Form.MouseMove += (s, e) => {
+        _dragHandler = (s, e) => {
             var pos = this.PointToClient(Cursor.Position);
             if (Bar.Top.Active) {
                 var offset = Bar.Top.CursorPos;
@@ -92,6 +112,40 @@ public class EdgeSlider /*: UserControl*/ {
                 this.Invalidate(FullBar);
             }
         };
+
+        this.Form.Layout += _layoutHandler;
+        this.Form.MouseEnter += _hoverHandler;
+        this.Form.MouseHover += _hoverHandler;
+        this.Form.MouseMove += _hoverMoveHandler;
+        this.Form.MouseLeave += _hoverHandler;
+        this.Form.MouseDown += _mouseDownHandler;
+        this.Form.MouseUp += _mouseUpHandler;
+        this.Form.MouseMove += _dragHandler;
+    }
+
+    // bars created after the form is already visible won't get a Layout event to
+    // populate Bar until something actually resizes the panel, so compute it eagerly
+    // once Bounds/LayoutStyle/offsets have been set (typically right after construction)
+    public void RecalculateBar()
+    {
+        Bar = GetBar(Size, TopOffset, BottomOffset);
+    }
+
+    public void Dispose()
+    {
+        _panel.Sliders.Remove(this);
+        this.Form.Layout -= _layoutHandler;
+        this.Form.MouseEnter -= _hoverHandler;
+        this.Form.MouseHover -= _hoverHandler;
+        this.Form.MouseMove -= _hoverMoveHandler;
+        this.Form.MouseLeave -= _hoverHandler;
+        this.Form.MouseDown -= _mouseDownHandler;
+        this.Form.MouseUp -= _mouseUpHandler;
+        this.Form.MouseMove -= _dragHandler;
+
+        if (Visible) {
+            this.Invalidate(FullBar);
+        }
     }
 
     private Point PointToClient(Point position)
@@ -128,6 +182,19 @@ public class EdgeSlider /*: UserControl*/ {
             this.Form.Cursor = Cursors.Default;
             this.Invalidate(Bar.Bottom);
         }
+
+        if (Visible && Bar.CloseButton != Rectangle.Empty && Bar.CloseButton.Contains(pos)) {
+            this.Form.Cursor = Cursors.Hand;
+            if (!Bar.CloseHover) {
+                Bar.CloseHover = true;
+                this.Invalidate(Bar.CloseButton);
+            }
+        }
+        else if (Bar.CloseHover) {
+            Bar.CloseHover = false;
+            this.Form.Cursor = Cursors.Default;
+            this.Invalidate(Bar.CloseButton);
+        }
     }
 
     private void Invalidate(GraphicsPath path)
@@ -141,6 +208,13 @@ public class EdgeSlider /*: UserControl*/ {
         path = new GraphicsPath(points, types);
         var region = new Region(path);
         this.Form.Invalidate(region);
+    }
+
+    private void Invalidate(Rectangle rect)
+    {
+        var path = new GraphicsPath();
+        path.AddRectangle(rect);
+        this.Invalidate(path);
     }
 
     public void OnPaintBackground(PaintEventArgs e)
@@ -158,7 +232,8 @@ public class EdgeSlider /*: UserControl*/ {
         //base.OnPaint(e);
         if (Visible && e.Graphics.ClipBounds.IntersectsWith(Bounds)) {
             e.Graphics.TranslateTransform(Bounds.X, Bounds.Y);
-            Bar.Draw(e.Graphics);
+            var vertical = LayoutStyle is LayoutStyle.Left or LayoutStyle.Right;
+            Bar.Draw(e.Graphics, label: (TargetScreenId + 1).ToString(), vertical: vertical);
             e.Graphics.ResetTransform();
         }
     }
@@ -219,15 +294,33 @@ internal class Bar {
     public Triangle Top { get; }
     public Rectangle Body { get; }
     public Triangle Bottom { get; }
+    public Rectangle CloseButton { get; }
+    public bool CloseHover { get; set; }
 
     public Bar(Triangle top, Rectangle body, Triangle bottom)
     {
         Top = top;
         Body = body;
         Bottom = bottom;
+        CloseButton = ComputeCloseButton(body);
     }
 
-    public void Draw(Graphics g, Color? bgColor = null)
+    private static Rectangle ComputeCloseButton(Rectangle body)
+    {
+        const int closeSize = 16;
+        if (body.Width < closeSize + 4 || body.Height < closeSize + 4) {
+            return Rectangle.Empty;
+        }
+
+        return new Rectangle(
+            body.X + body.Width / 2 - closeSize / 2,
+            body.Y + body.Height / 2 - closeSize / 2,
+            closeSize,
+            closeSize
+        );
+    }
+
+    public void Draw(Graphics g, Color? bgColor = null, string? label = null, bool vertical = false)
     {
         using (var bodyBg = new SolidBrush(bgColor ?? Color.Blue)) {
             g.FillRectangle(bodyBg, Body);
@@ -235,6 +328,64 @@ internal class Bar {
             Top.Draw(g, bgColor);
             Bottom.Draw(g, bgColor);
         }
+
+        // only draw the remove control / target label for the actual bar, not for the transparent background pass
+        if (bgColor == null && CloseButton != Rectangle.Empty) {
+            var fill = CloseHover ? Color.FromArgb(230, Color.Red) : Color.FromArgb(160, Color.Black);
+            using (var brush = new SolidBrush(fill))
+            using (var pen = new Pen(Color.White, 2)) {
+                g.FillEllipse(brush, CloseButton);
+
+                var inset = CloseButton;
+                inset.Inflate(-CloseButton.Width / 4, -CloseButton.Height / 4);
+                g.DrawLine(pen, inset.Left, inset.Top, inset.Right, inset.Bottom);
+                g.DrawLine(pen, inset.Left, inset.Bottom, inset.Right, inset.Top);
+            }
+        }
+
+        if (bgColor == null && !string.IsNullOrEmpty(label)) {
+            DrawLabel(g, label, vertical);
+        }
+    }
+
+    private void DrawLabel(Graphics g, string label, bool vertical)
+    {
+        using var font = new Font(FontFamily.GenericSansSerif, 9f, FontStyle.Bold);
+        var size = g.MeasureString(label, font);
+
+        // keep well clear of the close button in the middle of the body, so put the
+        // label near the leading edge of the segment instead of dead-center
+        const int margin = 6;
+        const int clearance = 30; // rough half-width of the close button plus some breathing room
+
+        var state = g.Save();
+        try {
+            if (vertical) {
+                if (Body.Height < size.Width + margin + clearance) return;
+
+                g.TranslateTransform(Body.X + Body.Width / 2f, Body.Y + margin);
+                g.RotateTransform(90);
+                DrawLabelBackground(g, new RectangleF(0, 0, size.Width, size.Height));
+                g.DrawString(label, font, Brushes.White, 0, 0);
+            }
+            else {
+                if (Body.Width < size.Width + margin + clearance) return;
+
+                var pos = new PointF(Body.X + margin, Body.Y + Body.Height / 2f - size.Height / 2f);
+                DrawLabelBackground(g, new RectangleF(pos, size));
+                g.DrawString(label, font, Brushes.White, pos);
+            }
+        }
+        finally {
+            g.Restore(state);
+        }
+    }
+
+    private static void DrawLabelBackground(Graphics g, RectangleF textBounds)
+    {
+        var bg = RectangleF.Inflate(textBounds, 3, 1);
+        using var brush = new SolidBrush(Color.FromArgb(160, Color.Black));
+        g.FillRectangle(brush, bg);
     }
 
     public GraphicsPath Path {

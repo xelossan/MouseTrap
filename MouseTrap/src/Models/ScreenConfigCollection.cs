@@ -54,21 +54,10 @@ public class ScreenConfigCollection : List<ScreenConfig> {
             config.Primary = screens[i].Primary;
 
             // if TargetScreen does not exist anymore
-            if (config.TopBridge != null && config.TopBridge.TargetScreenId >= screens.Length) {
-                config.TopBridge = null;
-            }
-
-            if (config.LeftBridge != null && config.LeftBridge.TargetScreenId >= screens.Length) {
-                config.LeftBridge = null;
-            }
-
-            if (config.RightBridge != null && config.RightBridge.TargetScreenId >= screens.Length) {
-                config.RightBridge = null;
-            }
-
-            if (config.BottomBridge != null && config.BottomBridge.TargetScreenId >= screens.Length) {
-                config.BottomBridge = null;
-            }
+            config.TopBridges.RemoveAll(b => b.TargetScreenId >= screens.Length);
+            config.LeftBridges.RemoveAll(b => b.TargetScreenId >= screens.Length);
+            config.RightBridges.RemoveAll(b => b.TargetScreenId >= screens.Length);
+            config.BottomBridges.RemoveAll(b => b.TargetScreenId >= screens.Length);
 
             obj.Add(config);
         }

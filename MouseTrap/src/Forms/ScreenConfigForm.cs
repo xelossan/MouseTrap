@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using MouseTrap.Models;
 
 
@@ -10,10 +10,11 @@ public partial class ScreenConfigForm : Form {
     public Button BtnLeft;
     public Button BtnRight;
     public Button BtnBottom;
-    public EdgeSlider BarTop;
-    public EdgeSlider BarLeft;
-    public EdgeSlider BarRight;
-    public EdgeSlider BarBottom;
+
+    public List<EdgeSlider> BarsTop { get; } = new();
+    public List<EdgeSlider> BarsLeft { get; } = new();
+    public List<EdgeSlider> BarsRight { get; } = new();
+    public List<EdgeSlider> BarsBottom { get; } = new();
 
     public Button ResetBtn;
     public Button TestBtn;
@@ -39,7 +40,11 @@ public partial class ScreenConfigForm : Form {
         this.StartPosition = FormStartPosition.Manual;
         this.Bounds = Screen.Bounds;
         this.CancelButton = CancelBtn;
-        this.AutoScaleMode = AutoScaleMode.Dpi;
+        // every control here is positioned/sized from live Width/Height/Bounds at construction
+        // time, not fixed designer-time coordinates, so there is nothing for WinForms' automatic
+        // DPI rescaling to usefully correct - and in this mixed-DPI, multi-monitor, manually
+        // positioned setup it appears to be the source of a control ending up wrongly sized
+        this.AutoScaleMode = AutoScaleMode.None;
         this.KeyPreview = true;
         this.KeyDown += (sender, args) => {
             if (args.KeyCode == Keys.Escape) {
@@ -55,6 +60,23 @@ public partial class ScreenConfigForm : Form {
 
         Panel.ResumeLayout(false);
         this.ResumeLayout(false);
+
+        // controls laid out while the form isn't visible/settled on its real target screen yet can
+        // end up with stale sizes/positions or simply miss their first paint (their Show() ->
+        // Invalidate() calls before the window handle exists are no-ops) - this seems to be a race
+        // with the window's own creation/show messages, since it isn't reliably reproducible.
+        // Force a full relayout + recursive repaint once shown, and again one message-loop tick
+        // later (BeginInvoke), so it lands after whatever queued messages caused the miss.
+        this.Shown += (s, e) => {
+            void RefreshLayout()
+            {
+                Panel.PerformLayout();
+                Panel.Invalidate(true);
+            }
+
+            RefreshLayout();
+            this.BeginInvoke((Action) RefreshLayout);
+        };
     }
 
 
@@ -107,7 +129,11 @@ public partial class ScreenConfigForm : Form {
         };
 
         table.Controls.Add(new FlowLayoutPanel() {
-            Size = new Size(6 + TestBtn.Width + 6 + SaveBtn.Width + 6 + CancelBtn.Width + 6, 40 + 6),
+            // AutoSize instead of a fixed literal: on a monitor with different DPI than the one this
+            // form was first laid out for, the buttons get rescaled but a fixed Size here would not,
+            // leaving the panel too small and clipping/mispositioning its (Anchor=None, centered) content
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(3),
             Anchor = AnchorStyles.None,
             Controls = { TestBtn, ResetBtn, SaveBtn, CancelBtn }
@@ -128,7 +154,7 @@ public partial class ScreenConfigForm : Form {
             Text = "+",
             UseVisualStyleBackColor = true
         };
-        BtnTop.Click += (s, e) => ToggleTop();
+        BtnTop.Click += (s, e) => AddTop();
         Panel.Controls.Add(BtnTop);
 
         BtnLeft = new Button {
@@ -137,7 +163,7 @@ public partial class ScreenConfigForm : Form {
             Text = "+",
             UseVisualStyleBackColor = true
         };
-        BtnLeft.Click += (s, e) => ToggleLeft();
+        BtnLeft.Click += (s, e) => AddLeft();
         Panel.Controls.Add(BtnLeft);
 
         BtnRight = new Button {
@@ -146,7 +172,7 @@ public partial class ScreenConfigForm : Form {
             Text = "+",
             UseVisualStyleBackColor = true
         };
-        BtnRight.Click += (s, e) => ToggleRight();
+        BtnRight.Click += (s, e) => AddRight();
         Panel.Controls.Add(BtnRight);
 
         BtnBottom = new Button {
@@ -155,128 +181,106 @@ public partial class ScreenConfigForm : Form {
             Text = "+",
             UseVisualStyleBackColor = true
         };
-        BtnBottom.Click += (s, e) => ToggleBottom();
+        BtnBottom.Click += (s, e) => AddBottom();
         Panel.Controls.Add(BtnBottom);
     }
 
     private void SetupBars()
     {
-        BarTop = new EdgeSlider(Panel) {
-            Bounds = new Rectangle(0, 0, Width, 60),
-            LayoutStyle = LayoutStyle.Top,
-            TopOffset = Screen.TopBridge?.TopOffset ?? 0,
-            BottomOffset = Screen.TopBridge?.BottomOffset ?? 0,
-            //Visible = screen.TopBridge != null
-        };
-        if (Screen.TopBridge != null) {
-            ToggleTop(Screen.TopBridge.TargetScreenId, forceEnable: true);
+        // pass the persisted Bridge.Id through as the bar's BarId so that a bar loaded from disk
+        // can still find and remove its mirrored counterpart on the other screen's form, even in
+        // a later session where BarIds would otherwise be freshly generated on both sides
+        foreach (var bridge in Screen.TopBridges) {
+            AddTop(bridge.TargetScreenId, bridge.TopOffset, bridge.BottomOffset, bridge.Id);
         }
 
-        BarBottom = new EdgeSlider(Panel) {
-            Bounds = new Rectangle(0, Height - 60, Width, 60),
-            LayoutStyle = LayoutStyle.Bottom,
-            TopOffset = Screen.BottomBridge?.TopOffset ?? 0,
-            BottomOffset = Screen.BottomBridge?.BottomOffset ?? 0,
-            //Visible = screen.BottomBridge != null
-        };
-        if (Screen.BottomBridge != null) {
-            ToggleBottom(Screen.BottomBridge.TargetScreenId, forceEnable: true);
+        foreach (var bridge in Screen.BottomBridges) {
+            AddBottom(bridge.TargetScreenId, bridge.TopOffset, bridge.BottomOffset, bridge.Id);
         }
 
-        BarLeft = new EdgeSlider(Panel) {
-            Bounds = new Rectangle(0, 0, 60, Height),
-            LayoutStyle = LayoutStyle.Left,
-            TopOffset = Screen.LeftBridge?.TopOffset ?? 0,
-            BottomOffset = Screen.LeftBridge?.BottomOffset ?? 0,
-            //Visible = screen.LeftBridge != null
-        };
-        if (Screen.LeftBridge != null) {
-            ToggleLeft(Screen.LeftBridge.TargetScreenId, forceEnable: true);
+        foreach (var bridge in Screen.LeftBridges) {
+            AddLeft(bridge.TargetScreenId, bridge.TopOffset, bridge.BottomOffset, bridge.Id);
         }
 
-        BarRight = new EdgeSlider(Panel) {
-            Bounds = new Rectangle(Width - 60, 0, 60, Height),
-            LayoutStyle = LayoutStyle.Right,
-            TopOffset = Screen.RightBridge?.TopOffset ?? 0,
-            BottomOffset = Screen.RightBridge?.BottomOffset ?? 0,
-            //Visible = screen.RightBridge != null
-        };
-        if (Screen.RightBridge != null) {
-            ToggleRight(Screen.RightBridge.TargetScreenId, forceEnable: true);
+        foreach (var bridge in Screen.RightBridges) {
+            AddRight(bridge.TargetScreenId, bridge.TopOffset, bridge.BottomOffset, bridge.Id);
         }
     }
 
 
-    public void ToggleLeft(int? targetId = null, bool forceEnable = false, bool forceDisable = false)
+    // Adds one more bridge to the given edge. When targetId is null this is a user-initiated
+    // "+" click, so GetTargetScreenId is asked to pick a target and, as a side effect, creates
+    // the matching bar on the opposite edge of that target screen (see ConfigFrom.GetTargetScreenId).
+    public EdgeSlider AddTop(int? targetId = null, int topOffset = 0, int bottomOffset = 0, Guid? barId = null)
+        => AddBar(BarsTop, BtnTop, BridgePosition.Top, LayoutStyle.Top, new Rectangle(0, 0, Width, 60), dx: 0, dy: 20, targetId, topOffset, bottomOffset, barId);
+
+    public EdgeSlider AddBottom(int? targetId = null, int topOffset = 0, int bottomOffset = 0, Guid? barId = null)
+        => AddBar(BarsBottom, BtnBottom, BridgePosition.Bottom, LayoutStyle.Bottom, new Rectangle(0, Height - 60, Width, 60), dx: 0, dy: -20, targetId, topOffset, bottomOffset, barId);
+
+    public EdgeSlider AddLeft(int? targetId = null, int topOffset = 0, int bottomOffset = 0, Guid? barId = null)
+        => AddBar(BarsLeft, BtnLeft, BridgePosition.Left, LayoutStyle.Left, new Rectangle(0, 0, 60, Height), dx: 20, dy: 0, targetId, topOffset, bottomOffset, barId);
+
+    public EdgeSlider AddRight(int? targetId = null, int topOffset = 0, int bottomOffset = 0, Guid? barId = null)
+        => AddBar(BarsRight, BtnRight, BridgePosition.Right, LayoutStyle.Right, new Rectangle(Width - 60, 0, 60, Height), dx: -20, dy: 0, targetId, topOffset, bottomOffset, barId);
+
+    private readonly HashSet<BridgePosition> _shiftedButtons = new();
+
+    private EdgeSlider AddBar(List<EdgeSlider> list, Button button, BridgePosition position, LayoutStyle layoutStyle, Rectangle bounds, int dx, int dy, int? targetId, int topOffset, int bottomOffset, Guid? barId)
     {
-        if (!BarLeft.Visible && !forceDisable) {
-            BarLeft.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, BridgePosition.Left);
-            BtnLeft.Location = new Point(BtnLeft.Location.X + 20, BtnLeft.Location.Y);
-            BtnLeft.Text = "-";
-            BarLeft.Show();
+        var bar = new EdgeSlider(Panel, barId) {
+            Bounds = bounds,
+            LayoutStyle = layoutStyle,
+            TopOffset = topOffset,
+            BottomOffset = bottomOffset,
+        };
+        bar.RecalculateBar();
+
+        bar.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, position, bar.BarId);
+
+        bar.RemoveRequested += (s, e) => RemoveBarInternal(list, button, position, dx, dy, bar, notifyMirror: true);
+
+        list.Add(bar);
+        bar.Show();
+
+        if (_shiftedButtons.Add(position)) {
+            button.Location = new Point(button.Location.X + dx, button.Location.Y + dy);
         }
-        else if (!forceEnable) {
-            BtnLeft.Location = new Point(BtnLeft.Location.X - 20, BtnLeft.Location.Y);
-            BtnLeft.Text = "+";
-            BarLeft.Hide();
-            if (!forceDisable) {
-                this.RemoveBar?.Invoke(this, BridgePosition.Left, BarLeft.TargetScreenId);
-            }
+
+        return bar;
+    }
+
+    private void RemoveBarInternal(List<EdgeSlider> list, Button button, BridgePosition position, int dx, int dy, EdgeSlider bar, bool notifyMirror)
+    {
+        list.Remove(bar);
+        bar.Dispose();
+
+        if (list.Count == 0 && _shiftedButtons.Remove(position)) {
+            button.Location = new Point(button.Location.X - dx, button.Location.Y - dy);
+        }
+
+        if (notifyMirror) {
+            this.RemoveBar?.Invoke(this, position, bar.TargetScreenId, bar.BarId);
         }
     }
 
-    public void ToggleRight(int? targetId = null, bool forceEnable = false, bool forceDisable = false)
+    public void RemoveTargetBarForPosition(BridgePosition position, Guid barId)
     {
-        if (!BarRight.Visible && !forceDisable) {
-            BarRight.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, BridgePosition.Right);
-            BtnRight.Location = new Point(BtnRight.Location.X - 20, BtnRight.Location.Y);
-            BtnRight.Text = "-";
-            BarRight.Show();
-        }
-        else if (!forceEnable) {
-            BtnRight.Location = new Point(BtnRight.Location.X + 20, BtnRight.Location.Y);
-            BtnRight.Text = "+";
-            BarRight.Hide();
-            if (!forceDisable) {
-                this.RemoveBar?.Invoke(this, BridgePosition.Right, BarLeft.TargetScreenId);
-            }
+        var (list, button, dx, dy) = ListFor(position);
+        var bar = list.FirstOrDefault(_ => _.BarId == barId);
+        if (bar != null) {
+            RemoveBarInternal(list, button, position, dx, dy, bar, notifyMirror: false);
         }
     }
 
-    public void ToggleTop(int? targetId = null, bool forceEnable = false, bool forceDisable = false)
+    private (List<EdgeSlider> List, Button Button, int Dx, int Dy) ListFor(BridgePosition position)
     {
-        if (!BarTop.Visible && !forceDisable) {
-            BarTop.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, BridgePosition.Top);
-            BtnTop.Location = new Point(BtnTop.Location.X, BtnTop.Location.Y + 20);
-            BtnTop.Text = "-";
-            BarTop.Show();
-        }
-        else if (!forceEnable) {
-            BtnTop.Location = new Point(BtnTop.Location.X, BtnTop.Location.Y - 20);
-            BtnTop.Text = "+";
-            BarTop.Hide();
-            if (!forceDisable) {
-                this.RemoveBar?.Invoke(this, BridgePosition.Top, BarLeft.TargetScreenId);
-            }
-        }
-    }
-
-    public void ToggleBottom(int? targetId = null, bool forceEnable = false, bool forceDisable = false)
-    {
-        if (!BarBottom.Visible && !forceDisable) {
-            BarBottom.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, BridgePosition.Bottom);
-            BtnBottom.Location = new Point(BtnBottom.Location.X, BtnBottom.Location.Y - 20);
-            BtnBottom.Text = "-";
-            BarBottom.Show();
-        }
-        else if (!forceEnable) {
-            BtnBottom.Location = new Point(BtnBottom.Location.X, BtnBottom.Location.Y + 20);
-            BtnBottom.Text = "+";
-            BarBottom.Hide();
-            if (!forceDisable) {
-                this.RemoveBar?.Invoke(this, BridgePosition.Bottom, BarLeft.TargetScreenId);
-            }
-        }
+        return position switch {
+            BridgePosition.Top => (BarsTop, BtnTop, 0, 20),
+            BridgePosition.Left => (BarsLeft, BtnLeft, 20, 0),
+            BridgePosition.Right => (BarsRight, BtnRight, -20, 0),
+            BridgePosition.Bottom => (BarsBottom, BtnBottom, 0, -20),
+            _ => throw new ArgumentOutOfRangeException(nameof(position))
+        };
     }
 
 
@@ -285,78 +289,39 @@ public partial class ScreenConfigForm : Form {
 
     public ScreenConfig GetConfig()
     {
-        Screen.TopBridge = BarTop.Visible
-            ? new Bridge() {
-                TopOffset = BarTop.TopOffset,
-                BottomOffset = BarTop.BottomOffset,
-                TargetScreenId = BarTop.TargetScreenId
-            }
-            : null;
-
-        Screen.BottomBridge = BarBottom.Visible
-            ? new Bridge() {
-                TopOffset = BarBottom.TopOffset,
-                BottomOffset = BarBottom.BottomOffset,
-                TargetScreenId = BarBottom.TargetScreenId
-            }
-            : null;
-
-        Screen.LeftBridge = BarLeft.Visible
-            ? new Bridge() {
-                TopOffset = BarLeft.TopOffset,
-                BottomOffset = BarLeft.BottomOffset,
-                TargetScreenId = BarLeft.TargetScreenId
-            }
-            : null;
-
-        Screen.RightBridge = BarRight.Visible
-            ? new Bridge() {
-                TopOffset = BarRight.TopOffset,
-                BottomOffset = BarRight.BottomOffset,
-                TargetScreenId = BarRight.TargetScreenId
-            }
-            : null;
+        Screen.TopBridges = BarsTop.Select(ToBridge).ToList();
+        Screen.BottomBridges = BarsBottom.Select(ToBridge).ToList();
+        Screen.LeftBridges = BarsLeft.Select(ToBridge).ToList();
+        Screen.RightBridges = BarsRight.Select(ToBridge).ToList();
 
         return Screen;
+
+        static Bridge ToBridge(EdgeSlider bar) => new Bridge {
+            Id = bar.BarId,
+            TopOffset = bar.TopOffset,
+            BottomOffset = bar.BottomOffset,
+            TargetScreenId = bar.TargetScreenId
+        };
     }
 
-    public void AddTargetBarForPosition(BridgePosition position, int sourceScreenId)
+    public void AddTargetBarForPosition(BridgePosition position, int sourceScreenId, Guid barId)
     {
         switch (position) {
             case BridgePosition.Top:
-                ToggleBottom(sourceScreenId, forceEnable: true);
+                AddBottom(sourceScreenId, barId: barId);
                 break;
             case BridgePosition.Left:
-                ToggleRight(sourceScreenId, forceEnable: true);
+                AddRight(sourceScreenId, barId: barId);
                 break;
             case BridgePosition.Right:
-                ToggleLeft(sourceScreenId, forceEnable: true);
+                AddLeft(sourceScreenId, barId: barId);
                 break;
             case BridgePosition.Bottom:
-                ToggleTop(sourceScreenId, forceEnable: true);
-                break;
-        }
-    }
-
-    public void RemoveTargetBarForPosition(BridgePosition position)
-    {
-        switch (position) {
-            case BridgePosition.Top:
-                ToggleBottom(forceDisable: true);
-                break;
-            case BridgePosition.Left:
-                ToggleRight(forceDisable: true);
-                break;
-            case BridgePosition.Right:
-                ToggleLeft(forceDisable: true);
-                break;
-            case BridgePosition.Bottom:
-                ToggleTop(forceDisable: true);
+                AddTop(sourceScreenId, barId: barId);
                 break;
         }
     }
 }
 
-public delegate void RemoveBarEvent(ScreenConfigForm sender, BridgePosition position, int targetScreenId);
-
-public delegate int TargetScreenIdGetter(int sourceScreenId, BridgePosition position);
+public delegate void RemoveBarEvent(ScreenConfigForm sender, BridgePosition position, int targetScreenId, Guid barId);
+public delegate int TargetScreenIdGetter(int sourceScreenId, BridgePosition position, Guid barId);

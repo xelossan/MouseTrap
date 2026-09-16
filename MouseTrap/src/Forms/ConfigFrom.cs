@@ -82,18 +82,18 @@ public partial class ConfigFrom : Form {
                 Bounds = screen.Bounds,
                 Primary = screen.Primary,
                 ScreenId = screen.ScreenId,
-                TopBridge = screen.TopBridge,
-                LeftBridge = screen.LeftBridge,
-                RightBridge = screen.RightBridge,
-                BottomBridge = screen.BottomBridge,
+                TopBridges = new List<Bridge>(screen.TopBridges),
+                LeftBridges = new List<Bridge>(screen.LeftBridges),
+                RightBridges = new List<Bridge>(screen.RightBridges),
+                BottomBridges = new List<Bridge>(screen.BottomBridges),
             };
 
             var form = new ScreenConfigForm(config) {
                 GetTargetScreenId = GetTargetScreenId
             };
 
-            form.RemoveBar += (s, position, targetScreenId) => {
-                forms.SingleOrDefault(_ => _.Screen.ScreenId == targetScreenId)?.RemoveTargetBarForPosition(position);
+            form.RemoveBar += (s, position, targetScreenId, barId) => {
+                forms.SingleOrDefault(_ => _.Screen.ScreenId == targetScreenId)?.RemoveTargetBarForPosition(position, barId);
             };
 
             form.TestBtn.Click += (s, e) => {
@@ -126,7 +126,7 @@ public partial class ConfigFrom : Form {
         }
 
 
-        int GetTargetScreenId(int sourceScreenId, BridgePosition position)
+        int GetTargetScreenId(int sourceScreenId, BridgePosition position, Guid barId)
         {
             var others = Screens.Where(_ => _.ScreenId != sourceScreenId).ToArray();
 
@@ -139,7 +139,7 @@ public partial class ConfigFrom : Form {
             }
 
             forms.Single(_ => _.Screen.ScreenId == targetId)
-                .AddTargetBarForPosition(position, sourceScreenId);
+                .AddTargetBarForPosition(position, sourceScreenId, barId);
 
             return targetId;
         }

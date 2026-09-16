@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 
 namespace MouseTrap.Models;
@@ -14,12 +14,22 @@ public class ScreenConfig {
     public bool Primary { get; set; }
 
     [JsonIgnore]
-    public bool HasBridges => TopBridge != null || LeftBridge != null || RightBridge != null || BottomBridge != null;
+    public bool HasBridges => TopBridges.Count > 0 || LeftBridges.Count > 0 || RightBridges.Count > 0 || BottomBridges.Count > 0;
 
-    public Bridge? TopBridge { get; set; }
-    public Bridge? LeftBridge { get; set; }
-    public Bridge? RightBridge { get; set; }
-    public Bridge? BottomBridge { get; set; }
+    public List<Bridge> TopBridges { get; set; } = new();
+    public List<Bridge> LeftBridges { get; set; } = new();
+    public List<Bridge> RightBridges { get; set; } = new();
+    public List<Bridge> BottomBridges { get; set; } = new();
+
+    // kept only to migrate settings files written before multiple bridges per edge were supported
+    [JsonPropertyName("TopBridge")]
+    public Bridge? LegacyTopBridge { get => null; set { if (value != null) TopBridges.Add(value); } }
+    [JsonPropertyName("LeftBridge")]
+    public Bridge? LegacyLeftBridge { get => null; set { if (value != null) LeftBridges.Add(value); } }
+    [JsonPropertyName("RightBridge")]
+    public Bridge? LegacyRightBridge { get => null; set { if (value != null) RightBridges.Add(value); } }
+    [JsonPropertyName("BottomBridge")]
+    public Bridge? LegacyBottomBridge { get => null; set { if (value != null) BottomBridges.Add(value); } }
 
     public Rectangle Bounds;
 
@@ -27,49 +37,71 @@ public class ScreenConfig {
     private const int Space = 2;
 
     [JsonIgnore]
-    public Rectangle RightHotSpace => RightBridge != null
-        ? new Rectangle(
-            Bounds.X + Bounds.Width - Space,
-            Bounds.Y + RightBridge.TopOffset,
-            Space,
-            Bounds.Height - RightBridge.TopOffset - RightBridge.BottomOffset
-        )
-        : Rectangle.Empty;
-
+    public IEnumerable<(Bridge Bridge, Rectangle HotSpace)> RightHotSpaces => RightBridges.Select(b => (b, HotSpaceFor(Edge.Right, b)));
     [JsonIgnore]
-    public Rectangle LeftHotSpace => LeftBridge != null
-        ? new Rectangle(
-            Bounds.X,
-            Bounds.Y + LeftBridge.TopOffset,
-            Space,
-            Bounds.Height - LeftBridge.TopOffset - LeftBridge.BottomOffset
-        )
-        : Rectangle.Empty;
-
+    public IEnumerable<(Bridge Bridge, Rectangle HotSpace)> LeftHotSpaces => LeftBridges.Select(b => (b, HotSpaceFor(Edge.Left, b)));
     [JsonIgnore]
-    public Rectangle TopHotSpace => TopBridge != null
-        ? new Rectangle(
-            Bounds.X + TopBridge.TopOffset,
-            Bounds.Y,
-            Bounds.Width - TopBridge.TopOffset - TopBridge.BottomOffset,
-            Space
-        )
-        : Rectangle.Empty;
-
+    public IEnumerable<(Bridge Bridge, Rectangle HotSpace)> TopHotSpaces => TopBridges.Select(b => (b, HotSpaceFor(Edge.Top, b)));
     [JsonIgnore]
-    public Rectangle BottomHotSpace => BottomBridge != null
-        ? new Rectangle(
-            Bounds.X + BottomBridge.TopOffset,
-            Bounds.Y + Bounds.Height - Space,
-            Bounds.Width - BottomBridge.TopOffset - BottomBridge.BottomOffset,
-            Space
-        )
-        : Rectangle.Empty;
+    public IEnumerable<(Bridge Bridge, Rectangle HotSpace)> BottomHotSpaces => BottomBridges.Select(b => (b, HotSpaceFor(Edge.Bottom, b)));
+
+    public Rectangle HotSpaceFor(Edge edge, Bridge bridge)
+    {
+        return edge switch {
+            Edge.Right => new Rectangle(
+                Bounds.X + Bounds.Width - Space,
+                Bounds.Y + bridge.TopOffset,
+                Space,
+                Bounds.Height - bridge.TopOffset - bridge.BottomOffset
+            ),
+            Edge.Left => new Rectangle(
+                Bounds.X,
+                Bounds.Y + bridge.TopOffset,
+                Space,
+                Bounds.Height - bridge.TopOffset - bridge.BottomOffset
+            ),
+            Edge.Top => new Rectangle(
+                Bounds.X + bridge.TopOffset,
+                Bounds.Y,
+                Bounds.Width - bridge.TopOffset - bridge.BottomOffset,
+                Space
+            ),
+            Edge.Bottom => new Rectangle(
+                Bounds.X + bridge.TopOffset,
+                Bounds.Y + Bounds.Height - Space,
+                Bounds.Width - bridge.TopOffset - bridge.BottomOffset,
+                Space
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(edge))
+        };
+    }
+
+    public List<Bridge> BridgesFor(Edge edge)
+    {
+        return edge switch {
+            Edge.Top => TopBridges,
+            Edge.Left => LeftBridges,
+            Edge.Right => RightBridges,
+            Edge.Bottom => BottomBridges,
+            _ => throw new ArgumentOutOfRangeException(nameof(edge))
+        };
+    }
 }
 
 [Serializable]
 public class Bridge {
+    // pairs a bridge with its mirrored counterpart on the target screen so that removing
+    // one side can find and remove the other, even across app restarts
+    public Guid Id { get; set; } = Guid.NewGuid();
+
     public int TopOffset { get; set; }
     public int BottomOffset { get; set; }
     public int TargetScreenId { get; set; }
+}
+
+public enum Edge {
+    Top,
+    Left,
+    Right,
+    Bottom
 }

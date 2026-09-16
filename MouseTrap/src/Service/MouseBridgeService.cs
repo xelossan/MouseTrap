@@ -72,63 +72,78 @@ public class MouseBridgeService : IService {
                 var direction = GetDirection(in position);
 
                 // ==>
-                var hotspace = current.RightHotSpace;
-                if (direction.HasFlag(Direction.ToRight) && hotspace.Contains(position)) {
-                    var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == current.RightBridge!.TargetScreenId);
-                    if (targetScreen != null) {
-                        var target = targetScreen.LeftHotSpace;
-                        if (target != Rectangle.Empty) {
+                if (direction.HasFlag(Direction.ToRight)) {
+                    foreach (var (bridge, hotspace) in current.RightHotSpaces) {
+                        if (!hotspace.Contains(position)) continue;
+
+                        var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == bridge.TargetScreenId);
+                        var targetBridge = FindReciprocalBridge(targetScreen, Edge.Left, current.ScreenId);
+                        if (targetScreen != null && targetBridge != null) {
+                            var target = targetScreen.HotSpaceFor(Edge.Left, targetBridge);
                             MouseTrapClear();
 
                             var newY = MapY(position.Y, in hotspace, in target);
                             MouseMove(in current.Bounds, in targetScreen.Bounds, (target.X + target.Width + 1), newY);
                         }
+
+                        break;
                     }
                 }
 
                 // <==
-                hotspace = current.LeftHotSpace;
-                if (direction.HasFlag(Direction.ToLeft) && hotspace.Contains(position)) {
-                    var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == current.LeftBridge!.TargetScreenId);
-                    if (targetScreen != null) {
-                        var target = targetScreen.RightHotSpace;
-                        if (target != Rectangle.Empty) {
+                if (direction.HasFlag(Direction.ToLeft)) {
+                    foreach (var (bridge, hotspace) in current.LeftHotSpaces) {
+                        if (!hotspace.Contains(position)) continue;
+
+                        var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == bridge.TargetScreenId);
+                        var targetBridge = FindReciprocalBridge(targetScreen, Edge.Right, current.ScreenId);
+                        if (targetScreen != null && targetBridge != null) {
+                            var target = targetScreen.HotSpaceFor(Edge.Right, targetBridge);
                             MouseTrapClear();
 
                             var newY = MapY(position.Y, in hotspace, in target);
                             MouseMove(in current.Bounds, in targetScreen.Bounds, (target.X - 1), newY);
                         }
+
+                        break;
                     }
                 }
 
-
                 // ^
-                hotspace = current.TopHotSpace;
-                if (direction.HasFlag(Direction.ToTop) && hotspace.Contains(position)) {
-                    var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == current.TopBridge!.TargetScreenId);
-                    if (targetScreen != null) {
-                        var target = targetScreen.BottomHotSpace;
-                        if (target != Rectangle.Empty) {
+                if (direction.HasFlag(Direction.ToTop)) {
+                    foreach (var (bridge, hotspace) in current.TopHotSpaces) {
+                        if (!hotspace.Contains(position)) continue;
+
+                        var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == bridge.TargetScreenId);
+                        var targetBridge = FindReciprocalBridge(targetScreen, Edge.Bottom, current.ScreenId);
+                        if (targetScreen != null && targetBridge != null) {
+                            var target = targetScreen.HotSpaceFor(Edge.Bottom, targetBridge);
                             MouseTrapClear();
 
                             var newX = MapX(position.X, in hotspace, in target);
                             MouseMove(in current.Bounds, in targetScreen.Bounds, newX, (target.Y - 1));
                         }
+
+                        break;
                     }
                 }
 
                 // v
-                hotspace = current.BottomHotSpace;
-                if (direction.HasFlag(Direction.ToBottom) && hotspace.Contains(position)) {
-                    var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == current.BottomBridge!.TargetScreenId);
-                    if (targetScreen != null) {
-                        var target = targetScreen.TopHotSpace;
-                        if (target != Rectangle.Empty) {
+                if (direction.HasFlag(Direction.ToBottom)) {
+                    foreach (var (bridge, hotspace) in current.BottomHotSpaces) {
+                        if (!hotspace.Contains(position)) continue;
+
+                        var targetScreen = _screens.FirstOrDefault(_ => _.ScreenId == bridge.TargetScreenId);
+                        var targetBridge = FindReciprocalBridge(targetScreen, Edge.Top, current.ScreenId);
+                        if (targetScreen != null && targetBridge != null) {
+                            var target = targetScreen.HotSpaceFor(Edge.Top, targetBridge);
                             MouseTrapClear();
 
                             var newX = MapX(position.X, in hotspace, in target);
                             MouseMove(in current.Bounds, in targetScreen.Bounds, newX, (target.Y + target.Height + 1));
                         }
+
+                        break;
                     }
                 }
             }
@@ -145,6 +160,16 @@ public class MouseBridgeService : IService {
         }
 
         return pos;
+    }
+
+    // several bridges can now share the same edge, so pick the one that actually points back
+    // to the screen we're coming from; fall back to the first one for older, single-bridge configs
+    private static Bridge? FindReciprocalBridge(ScreenConfig? targetScreen, Edge edge, int sourceScreenId)
+    {
+        if (targetScreen == null) return null;
+
+        var bridges = targetScreen.BridgesFor(edge);
+        return bridges.FirstOrDefault(b => b.TargetScreenId == sourceScreenId) ?? bridges.FirstOrDefault();
     }
 
 
