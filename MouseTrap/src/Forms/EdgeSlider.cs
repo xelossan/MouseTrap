@@ -15,6 +15,7 @@ public class EdgeSlider /*: UserControl*/ {
     public Control Form { get; }
 
     public event EventHandler? RemoveRequested;
+    public event EventHandler? RetargetRequested;
 
     public LayoutStyle LayoutStyle { get; set; }
     internal Bar Bar { get; private set; } = null!;
@@ -37,6 +38,8 @@ public class EdgeSlider /*: UserControl*/ {
     public int TargetScreenId { get; set; }
 
     private readonly SliderPanel _panel;
+    private bool _bodyClickArmed;
+    private Point _bodyClickPos;
 
     private readonly LayoutEventHandler _layoutHandler;
     private readonly EventHandler _hoverHandler;
@@ -83,10 +86,25 @@ public class EdgeSlider /*: UserControl*/ {
                 var offset = pos - new Size(loc.X, loc.Y);
                 Bar.Bottom.CursorPos = Bar.Bottom.GetBounds().Size - new Size(offset.X, offset.Y);
             }
+
+            // not resizing and not the close button - arm a plain click on the body to let the
+            // user change which screen this bridge targets, without needing to delete and re-add it
+            _bodyClickArmed = Visible && !Bar.Top.Active && !Bar.Bottom.Active && Bar.Body.Contains(clickPos);
+            _bodyClickPos = clickPos;
         };
         _mouseUpHandler = (s, e) => {
             Bar.Top.Active = false;
             Bar.Bottom.Active = false;
+
+            if (_bodyClickArmed) {
+                _bodyClickArmed = false;
+
+                var pos = this.PointToClient(Cursor.Position);
+                const int clickTolerance = 3;
+                if (Bar.Body.Contains(pos) && Math.Abs(pos.X - _bodyClickPos.X) <= clickTolerance && Math.Abs(pos.Y - _bodyClickPos.Y) <= clickTolerance) {
+                    RetargetRequested?.Invoke(this, EventArgs.Empty);
+                }
+            }
         };
         _dragHandler = (s, e) => {
             var pos = this.PointToClient(Cursor.Position);
@@ -195,6 +213,16 @@ public class EdgeSlider /*: UserControl*/ {
             this.Form.Cursor = Cursors.Default;
             this.Invalidate(Bar.CloseButton);
         }
+
+        var overCloseButton = Bar.CloseButton != Rectangle.Empty && Bar.CloseButton.Contains(pos);
+        if (Visible && Bar.Body.Contains(pos) && !overCloseButton) {
+            this.Form.Cursor = Cursors.Hand;
+            Bar.BodyHover = true;
+        }
+        else if (Bar.BodyHover) {
+            Bar.BodyHover = false;
+            this.Form.Cursor = Cursors.Default;
+        }
     }
 
     private void Invalidate(GraphicsPath path)
@@ -296,6 +324,7 @@ internal class Bar {
     public Triangle Bottom { get; }
     public Rectangle CloseButton { get; }
     public bool CloseHover { get; set; }
+    public bool BodyHover { get; set; }
 
     public Bar(Triangle top, Rectangle body, Triangle bottom)
     {

@@ -238,6 +238,10 @@ public partial class ScreenConfigForm : Form {
         bar.TargetScreenId = targetId ?? GetTargetScreenId(Screen.ScreenId, position, bar.BarId);
 
         bar.RemoveRequested += (s, e) => RemoveBarInternal(list, button, position, dx, dy, bar, notifyMirror: true);
+        bar.RetargetRequested += (s, e) => {
+            bar.TargetScreenId = RetargetScreenId(Screen.ScreenId, position, bar.BarId, bar.TargetScreenId);
+            Panel.Invalidate();
+        };
 
         list.Add(bar);
         bar.Show();
@@ -263,13 +267,28 @@ public partial class ScreenConfigForm : Form {
         }
     }
 
+    // position here is the edge of the SOURCE screen the removed bridge was on (that's what
+    // ScreenConfigForm.RemoveBar carries) - the mirror on THIS (target) form lives on the
+    // opposite edge, so the lookup must flip it before indexing into our own bar lists
     public void RemoveTargetBarForPosition(BridgePosition position, Guid barId)
     {
-        var (list, button, dx, dy) = ListFor(position);
+        var mirrorPosition = Opposite(position);
+        var (list, button, dx, dy) = ListFor(mirrorPosition);
         var bar = list.FirstOrDefault(_ => _.BarId == barId);
         if (bar != null) {
-            RemoveBarInternal(list, button, position, dx, dy, bar, notifyMirror: false);
+            RemoveBarInternal(list, button, mirrorPosition, dx, dy, bar, notifyMirror: false);
         }
+    }
+
+    private static BridgePosition Opposite(BridgePosition position)
+    {
+        return position switch {
+            BridgePosition.Top => BridgePosition.Bottom,
+            BridgePosition.Bottom => BridgePosition.Top,
+            BridgePosition.Left => BridgePosition.Right,
+            BridgePosition.Right => BridgePosition.Left,
+            _ => throw new ArgumentOutOfRangeException(nameof(position))
+        };
     }
 
     private (List<EdgeSlider> List, Button Button, int Dx, int Dy) ListFor(BridgePosition position)
@@ -286,6 +305,9 @@ public partial class ScreenConfigForm : Form {
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public TargetScreenIdGetter GetTargetScreenId { get; set; }
+
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public RetargetScreenIdGetter RetargetScreenId { get; set; }
 
     public ScreenConfig GetConfig()
     {
@@ -325,3 +347,4 @@ public partial class ScreenConfigForm : Form {
 
 public delegate void RemoveBarEvent(ScreenConfigForm sender, BridgePosition position, int targetScreenId, Guid barId);
 public delegate int TargetScreenIdGetter(int sourceScreenId, BridgePosition position, Guid barId);
+public delegate int RetargetScreenIdGetter(int sourceScreenId, BridgePosition position, Guid barId, int currentTargetId);

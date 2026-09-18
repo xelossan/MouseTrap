@@ -235,25 +235,7 @@ public static class ScreenInterrogatory {
 
     #endregion
 
-    private static string MonitorFriendlyName(LUID adapterId, uint targetId)
-    {
-        var deviceName = new DISPLAYCONFIG_TARGET_DEVICE_NAME {
-            header = {
-                size = (uint) Marshal.SizeOf(typeof(DISPLAYCONFIG_TARGET_DEVICE_NAME)),
-                adapterId = adapterId,
-                id = targetId,
-                type = DISPLAYCONFIG_DEVICE_INFO_TYPE.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
-            }
-        };
-        var error = DisplayConfigGetDeviceInfo(ref deviceName);
-        if (error != ERROR_SUCCESS) {
-            throw new Win32Exception(error);
-        }
-
-        return deviceName.monitorFriendlyDeviceName;
-    }
-
-    private static IEnumerable<string> GetAllMonitorsFriendlyNames()
+    private static IEnumerable<DISPLAYCONFIG_TARGET_DEVICE_NAME> GetAllTargetDeviceNames()
     {
         var error = GetDisplayConfigBufferSizes(QUERY_DEVICE_CONFIG_FLAGS.QDC_ONLY_ACTIVE_PATHS, out var pathCount, out var modeCount);
         if (error != ERROR_SUCCESS) {
@@ -269,28 +251,61 @@ public static class ScreenInterrogatory {
 
         for (var i = 0; i < modeCount; i++) {
             if (displayModes[i].infoType == DISPLAYCONFIG_MODE_INFO_TYPE.DISPLAYCONFIG_MODE_INFO_TYPE_TARGET) {
-                yield return MonitorFriendlyName(displayModes[i].adapterId, displayModes[i].id);
+                var deviceName = new DISPLAYCONFIG_TARGET_DEVICE_NAME {
+                    header = {
+                        size = (uint) Marshal.SizeOf(typeof(DISPLAYCONFIG_TARGET_DEVICE_NAME)),
+                        adapterId = displayModes[i].adapterId,
+                        id = displayModes[i].id,
+                        type = DISPLAYCONFIG_DEVICE_INFO_TYPE.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
+                    }
+                };
+                var err = DisplayConfigGetDeviceInfo(ref deviceName);
+                if (err != ERROR_SUCCESS) {
+                    throw new Win32Exception(err);
+                }
+
+                yield return deviceName;
             }
         }
+    }
+
+    private static string? Find<T>(Screen screen, Func<DISPLAYCONFIG_TARGET_DEVICE_NAME, T> select)
+    {
+        var deviceNames = GetAllTargetDeviceNames().ToArray();
+        var screens = Screen.AllScreens;
+        for (var index = 0; index < screens.Length; index++) {
+            if (Equals(screen, screens[index]) && index < deviceNames.Length) {
+                return select(deviceNames[index])?.ToString();
+            }
+        }
+
+        return null;
     }
 
     public static string? DeviceFriendlyName(this Screen screen)
     {
         try {
-            var allFriendlyNames = GetAllMonitorsFriendlyNames();
-            var screens = Screen.AllScreens;
-            for (var index = 0; index < screens.Length; index++) {
-                if (Equals(screen, screens[index])) {
-                    return allFriendlyNames.ToArray()[index];
-                }
-            }
-
-            return null;
+            return Find(screen, d => d.monitorFriendlyDeviceName);
         }
         catch (Exception e) {
             Logger.Error(e.Message, e);
 
             return $"<{e.Message}>";
+        }
+    }
+
+    // a monitor's own EDID-derived name/serial identify the physical device rather than which
+    // adapter output or Screen.AllScreens position it happens to be enumerated at right now, so
+    // saved bridges can still be matched to the right monitor after Windows reorders them
+    public static string? DeviceMonitorId(this Screen screen)
+    {
+        try {
+            return Find(screen, d => d.monitorDevicePath);
+        }
+        catch (Exception e) {
+            Logger.Error(e.Message, e);
+
+            return null;
         }
     }
 }

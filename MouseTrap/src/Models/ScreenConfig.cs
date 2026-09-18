@@ -11,6 +11,11 @@ public class ScreenConfig {
 
     public string? Name { get; set; }
 
+    // EDID/device-path based identity of the physical monitor, used to keep ScreenId (and the
+    // bridges that reference it) pointing at the right monitor even if Windows changes the
+    // Screen.AllScreens enumeration order; null for configs saved before this existed
+    public string? MonitorId { get; set; }
+
     public bool Primary { get; set; }
 
     [JsonIgnore]

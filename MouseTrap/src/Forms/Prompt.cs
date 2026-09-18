@@ -4,9 +4,13 @@
 namespace MouseTrap;
 
 public class Prompt {
-    public static int ChooseScreenDialog(ScreenConfigCollection screens, int screenIdToExclude)
+    // allowCancel: for changing an *existing* bridge's target, closing the dialog (Cancel, Escape,
+    // the X button) leaves it unchanged and returns -1, instead of forcing a pick like the original
+    // "add a new bridge" flow does (where there's nothing sensible to cancel back to).
+    public static int ChooseScreenDialog(ScreenConfigCollection screens, int screenIdToExclude, bool allowCancel = false)
     {
         var resultId = -1;
+        var cancelled = false;
         do {
             var f = new Form {
                 Width = 500,
@@ -17,6 +21,12 @@ public class Prompt {
                 Text = "Choose target screen",
                 Icon = App.Icon
             };
+
+            if (allowCancel) {
+                f.FormClosing += (s, e) => {
+                    if (resultId == -1) cancelled = true;
+                };
+            }
 
             var container = new FlowLayoutPanel {
                 Location = Point.Empty,
@@ -41,9 +51,16 @@ public class Prompt {
 
             f.Controls.Add(container);
 
-            f.ShowDialog();
-        } while (resultId == -1);
+            if (allowCancel) {
+                var cancelBtn = new Button { Text = "Cancel", Width = 80, Height = 30 };
+                cancelBtn.Click += (s, e) => f.Close();
+                container.Controls.Add(cancelBtn);
+                f.CancelButton = cancelBtn;
+            }
 
-        return resultId;
+            f.ShowDialog();
+        } while (resultId == -1 && !cancelled);
+
+        return cancelled ? -1 : resultId;
     }
 }

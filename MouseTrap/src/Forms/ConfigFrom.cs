@@ -89,7 +89,8 @@ public partial class ConfigFrom : Form {
             };
 
             var form = new ScreenConfigForm(config) {
-                GetTargetScreenId = GetTargetScreenId
+                GetTargetScreenId = GetTargetScreenId,
+                RetargetScreenId = RetargetScreenId
             };
 
             form.RemoveBar += (s, position, targetScreenId, barId) => {
@@ -142,6 +143,28 @@ public partial class ConfigFrom : Form {
                 .AddTargetBarForPosition(position, sourceScreenId, barId);
 
             return targetId;
+        }
+
+        int RetargetScreenId(int sourceScreenId, BridgePosition position, Guid barId, int currentTargetId)
+        {
+            var candidates = Screens.Where(_ => _.ScreenId != sourceScreenId).ToArray();
+            if (candidates.Length == 0) return currentTargetId;
+
+            int newTargetId;
+            if (candidates.Length > 1) {
+                newTargetId = Prompt.ChooseScreenDialog(Screens, sourceScreenId, allowCancel: true);
+                if (newTargetId < 0) return currentTargetId; // user cancelled - leave the bridge as it was
+            }
+            else {
+                newTargetId = candidates.Single().ScreenId;
+            }
+
+            if (newTargetId == currentTargetId) return currentTargetId;
+
+            forms.SingleOrDefault(_ => _.Screen.ScreenId == currentTargetId)?.RemoveTargetBarForPosition(position, barId);
+            forms.Single(_ => _.Screen.ScreenId == newTargetId).AddTargetBarForPosition(position, sourceScreenId, barId);
+
+            return newTargetId;
         }
 
         ScreenConfigCollection GetConfig()
