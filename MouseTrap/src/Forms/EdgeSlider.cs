@@ -65,6 +65,10 @@ public class EdgeSlider /*: UserControl*/ {
 
         _mouseDownHandler = (s, e) => {
             var clickPos = this.PointToClient(Cursor.Position);
+            // another bar drawn on top of this one (same edge, overlapping ranges) owns this pixel -
+            // without this, dragging/closing/retargeting here would act on both bars at once
+            if (IsCoveredAt(clickPos)) return;
+
             if (Visible && Bar.CloseButton != Rectangle.Empty && Bar.CloseButton.Contains(clickPos)) {
                 RemoveRequested?.Invoke(this, EventArgs.Empty);
                 return;
@@ -172,9 +176,47 @@ public class EdgeSlider /*: UserControl*/ {
         return new Point(position.X - Bounds.Location.X, position.Y - Bounds.Location.Y);
     }
 
+    // is any bar drawn after this one in the panel's paint order (so visually on top of it) also
+    // sitting on this pixel? Sliders don't know their own z-order relative to each other otherwise,
+    // since they all independently react to the same shared panel mouse events.
+    private bool IsCoveredAt(Point localPos)
+    {
+        var global = new Point(localPos.X + Bounds.X, localPos.Y + Bounds.Y);
+        var index = _panel.Sliders.IndexOf(this);
+        for (var i = index + 1; i < _panel.Sliders.Count; i++) {
+            if (_panel.Sliders[i].HitTestGlobal(global)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool HitTestGlobal(Point globalPos)
+    {
+        if (!Visible || Bar == null) return false;
+
+        var local = new Point(globalPos.X - Bounds.X, globalPos.Y - Bounds.Y);
+        return Bar.Top.Contains(local)
+            || Bar.Bottom.Contains(local)
+            || (Bar.CloseButton != Rectangle.Empty && Bar.CloseButton.Contains(local))
+            || Bar.Body.Contains(local);
+    }
+
     private void HandleHover()
     {
         var pos = this.PointToClient(Cursor.Position);
+
+        // another bar drawn on top of this one owns this pixel - don't show resize/close/retarget
+        // affordances for ours here, or its cursor and this one's would fight over every move
+        if (IsCoveredAt(pos)) {
+            if (Bar.Top.Hover) { Bar.Top.Hover = false; this.Invalidate(Bar.Top); }
+            if (Bar.Bottom.Hover) { Bar.Bottom.Hover = false; this.Invalidate(Bar.Bottom); }
+            if (Bar.CloseHover) { Bar.CloseHover = false; this.Invalidate(Bar.CloseButton); }
+            Bar.BodyHover = false;
+            return;
+        }
+
         if (Bar.Top.Contains(pos)) {
             this.Form.Cursor = LayoutStyle is LayoutStyle.Left or LayoutStyle.Right ? Cursors.SizeNS : Cursors.SizeWE;
             if (!Bar.Top.Hover) {

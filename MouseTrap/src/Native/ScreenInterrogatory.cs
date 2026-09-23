@@ -158,8 +158,8 @@ public static class ScreenInterrogatory {
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINTL {
-        private int x;
-        private int y;
+        public int x;
+        public int y;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -235,7 +235,13 @@ public static class ScreenInterrogatory {
 
     #endregion
 
-    private static IEnumerable<DISPLAYCONFIG_TARGET_DEVICE_NAME> GetAllTargetDeviceNames()
+    // QueryDisplayConfig (used for EDID/device-path info) and Screen.AllScreens (used for
+    // everything else) are two unrelated Win32 APIs with no shared, guaranteed enumeration order -
+    // pairing them up by matching index has been observed to attribute one monitor's name/EDID to a
+    // completely different physical screen. Correlate them properly instead, by the one thing both
+    // report consistently: each display's virtual-desktop position and size (Screen.Bounds here,
+    // DISPLAYCONFIG_SOURCE_MODE.position/width/height there).
+    private static IEnumerable<(Rectangle Bounds, DISPLAYCONFIG_TARGET_DEVICE_NAME Info)> GetMonitorsByBounds()
     {
         var error = GetDisplayConfigBufferSizes(QUERY_DEVICE_CONFIG_FLAGS.QDC_ONLY_ACTIVE_PATHS, out var pathCount, out var modeCount);
         if (error != ERROR_SUCCESS) {
@@ -249,33 +255,43 @@ public static class ScreenInterrogatory {
             throw new Win32Exception(error);
         }
 
-        for (var i = 0; i < modeCount; i++) {
-            if (displayModes[i].infoType == DISPLAYCONFIG_MODE_INFO_TYPE.DISPLAYCONFIG_MODE_INFO_TYPE_TARGET) {
-                var deviceName = new DISPLAYCONFIG_TARGET_DEVICE_NAME {
-                    header = {
-                        size = (uint) Marshal.SizeOf(typeof(DISPLAYCONFIG_TARGET_DEVICE_NAME)),
-                        adapterId = displayModes[i].adapterId,
-                        id = displayModes[i].id,
-                        type = DISPLAYCONFIG_DEVICE_INFO_TYPE.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
-                    }
-                };
-                var err = DisplayConfigGetDeviceInfo(ref deviceName);
-                if (err != ERROR_SUCCESS) {
-                    throw new Win32Exception(err);
-                }
+        for (var i = 0; i < pathCount; i++) {
+            var path = displayPaths[i];
+            var sourceModeIdx = path.sourceInfo.modeInfoIdx;
+            if (sourceModeIdx >= modeCount) continue;
 
-                yield return deviceName;
+            var sourceMode = displayModes[sourceModeIdx];
+            if (sourceMode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE.DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) continue;
+
+            var position = sourceMode.modeInfo.sourceMode.position;
+            var bounds = new Rectangle(position.x, position.y, (int) sourceMode.modeInfo.sourceMode.width, (int) sourceMode.modeInfo.sourceMode.height);
+
+            var deviceName = new DISPLAYCONFIG_TARGET_DEVICE_NAME {
+                header = {
+                    size = (uint) Marshal.SizeOf(typeof(DISPLAYCONFIG_TARGET_DEVICE_NAME)),
+                    adapterId = path.targetInfo.adapterId,
+                    id = path.targetInfo.id,
+                    type = DISPLAYCONFIG_DEVICE_INFO_TYPE.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
+                }
+            };
+            var err = DisplayConfigGetDeviceInfo(ref deviceName);
+            if (err != ERROR_SUCCESS) {
+                throw new Win32Exception(err);
             }
+
+            yield return (bounds, deviceName);
         }
     }
 
     private static string? Find<T>(Screen screen, Func<DISPLAYCONFIG_TARGET_DEVICE_NAME, T> select)
     {
-        var deviceNames = GetAllTargetDeviceNames().ToArray();
-        var screens = Screen.AllScreens;
-        for (var index = 0; index < screens.Length; index++) {
-            if (Equals(screen, screens[index]) && index < deviceNames.Length) {
-                return select(deviceNames[index])?.ToString();
+        // match by top-left position only, not full size: a monitor scaled in Windows' display
+        // settings reports different width/height here (QueryDisplayConfig's source mode is in raw
+        // physical pixels) than Screen.Bounds does (logical pixels, scaled down by that monitor's
+        // DPI factor) even though it's the same display - but two monitors never share an origin
+        foreach (var (bounds, info) in GetMonitorsByBounds()) {
+            if (bounds.Location == screen.Bounds.Location) {
+                return select(info)?.ToString();
             }
         }
 

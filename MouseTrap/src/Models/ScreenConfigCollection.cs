@@ -44,11 +44,14 @@ public class ScreenConfigCollection : List<ScreenConfig> {
         var loaded = SettingsFile.Load<ScreenConfigCollection>();
         var screens = Screen.AllScreens;
         var currentMonitorIds = screens.Select(s => s.DeviceMonitorId()).ToArray();
+        var currentNames = screens.Select(s => s.DeviceFriendlyName()).ToArray();
 
         // old ScreenId -> current Screen.AllScreens index, preferring a match by the monitor's own
         // stable identity over the (possibly now-shuffled) index the config was originally saved
         // under. Configs saved before MonitorId existed, or whose monitor's id didn't match any
-        // currently connected screen, fall back to the previous purely positional behavior.
+        // currently connected screen, fall back to matching by the monitor's friendly name (every
+        // save already has this, even ones from before MonitorId existed), and only then to the
+        // previous purely positional behavior.
         var idMap = new Dictionary<int, int>();
         var usedCurrentIndexes = new HashSet<int>();
 
@@ -56,6 +59,16 @@ public class ScreenConfigCollection : List<ScreenConfig> {
             if (old.MonitorId == null) continue;
 
             var newIndex = Array.IndexOf(currentMonitorIds, old.MonitorId);
+            if (newIndex >= 0 && usedCurrentIndexes.Add(newIndex)) {
+                idMap[old.ScreenId] = newIndex;
+            }
+        }
+
+        foreach (var old in loaded) {
+            if (idMap.ContainsKey(old.ScreenId)) continue;
+            if (string.IsNullOrEmpty(old.Name)) continue;
+
+            var newIndex = Array.IndexOf(currentNames, old.Name);
             if (newIndex >= 0 && usedCurrentIndexes.Add(newIndex)) {
                 idMap[old.ScreenId] = newIndex;
             }
